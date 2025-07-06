@@ -291,7 +291,117 @@ EOF
     msg_info "Running setup script in container $CT_ID"
     pct exec "$CT_ID" -- sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; /root/setup-nixos.sh'
 
+    # Show success message and re-creation command
+    local recreate_cmd="./$(basename "$0") create "
+    recreate_cmd+="--id $CT_ID "
+    recreate_cmd+="--name \"$CT_NAME\" "
+    recreate_cmd+="--cpus $CT_CPUS "
+    recreate_cmd+="--memory $CT_MEMORY "
+    recreate_cmd+="--swap $CT_SWAP "
+    recreate_cmd+="--disk $CT_DISK "
+    recreate_cmd+="--storage \"$CT_STORAGE\" "
+    recreate_cmd+="--bridge \"$CT_BRIDGE\" "
+    [ -n "$CT_IP" ] && [ "$CT_IP" != "dhcp" ] && recreate_cmd+="--ip $CT_IP --cidr $CT_CIDR --gw $CT_GW "
+    [ "$CT_IP" = "dhcp" ] && recreate_cmd+="--ip dhcp "
+    recreate_cmd+="--dns \"$CT_DNS\" "
+    [ -n "$CT_PASSWORD" ] && recreate_cmd+="--password \"$CT_PASSWORD\" "
+    [ -n "$CT_SSH_KEYS" ] && recreate_cmd+="--ssh-keys \"$CT_SSH_KEYS\" "
+    [ "$CT_START_ON_BOOT" = "1" ] && recreate_cmd+="--start-on-boot "
+    [ "$CT_UNPRIVILEGED" = "1" ] && recreate_cmd+="--unprivileged "
+    [ "$CT_NESTING" = "1" ] && recreate_cmd+="--nesting "
+    recreate_cmd+="--version $NIXOS_VERSION"
+
     msg_info "Container $CT_ID created successfully."
+    
+    # Show re-creation command in non-interactive mode
+    if [ "$INTERACTIVE" = false ]; then
+        echo -e "\nTo re-create this container, use:\n$recreate_cmd\n"
+    fi
+}
+
+show_settings_confirmation() {
+    local recreate_cmd="./$(basename "$0") create "
+    recreate_cmd+="--id $CT_ID "
+    recreate_cmd+="--name \"$CT_NAME\" "
+    recreate_cmd+="--cpus $CT_CPUS "
+    recreate_cmd+="--memory $CT_MEMORY "
+    recreate_cmd+="--swap $CT_SWAP "
+    recreate_cmd+="--disk $CT_DISK "
+    recreate_cmd+="--storage \"$CT_STORAGE\" "
+    recreate_cmd+="--bridge \"$CT_BRIDGE\" "
+    [ -n "$CT_IP" ] && [ "$CT_IP" != "dhcp" ] && recreate_cmd+="--ip $CT_IP --cidr $CT_CIDR --gw $CT_GW "
+    [ "$CT_IP" = "dhcp" ] && recreate_cmd+="--ip dhcp "
+    recreate_cmd+="--dns \"$CT_DNS\" "
+    [ -n "$CT_PASSWORD" ] && recreate_cmd+="--password \"$CT_PASSWORD\" "
+    [ -n "$CT_SSH_KEYS" ] && recreate_cmd+="--ssh-keys \"$CT_SSH_KEYS\" "
+    [ "$CT_START_ON_BOOT" = "1" ] && recreate_cmd+="--start-on-boot "
+    [ "$CT_UNPRIVILEGED" = "1" ] && recreate_cmd+="--unprivileged "
+    [ "$CT_NESTING" = "1" ] && recreate_cmd+="--nesting "
+    recreate_cmd+="--version $NIXOS_VERSION"
+
+    local message="Container Settings Review\n\n"
+    message+="ID: $CT_ID\n"
+    message+="Name: $CT_NAME\n"
+    message+="vCPUs: $CT_CPUS\n"
+    message+="Memory: $CT_MEMORY MB\n"
+    message+="Swap: $CT_SWAP MB\n"
+    message+="Disk: $CT_DISK GB\n"
+    message+="Storage: $CT_STORAGE\n"
+    message+="Network: $CT_BRIDGE\n"
+    message+="IP: ${CT_IP:-DHCP}\n"
+    if [ -n "$CT_IP" ] && [ "$CT_IP" != "dhcp" ]; then
+        message+="Gateway: $CT_GW\n"
+        message+="DNS: $CT_DNS\n"
+    fi
+    message+="Start on boot: $([ "$CT_START_ON_BOOT" = "1" ] && echo "Yes" || echo "No")\n"
+    message+="Unprivileged: $([ "$CT_UNPRIVILEGED" = "1" ] && echo "Yes" || echo "No")\n"
+    message+="Nesting: $([ "$CT_NESTING" = "1" ] && echo "Yes" || echo "No")\n"
+    message+="\nCommand to re-create this container later:\n\n$recreate_cmd"
+
+    if command -v whiptail >/dev/null 2>&1; then
+        whiptail --title "Confirm Container Creation" --yesno "$message" 30 100 \
+            --yes-button "Create" --no-button "Cancel"
+        return $?
+    else
+        echo -e "\n$message\n"
+        read -p "Proceed with container creation? [y/N] " -n 1 -r
+        echo
+        [[ $REPLY =~ ^[Yy]$ ]]
+        return $?
+    fi
+}
+
+run_interactive_mode() {
+    local choice
+    choice=$(whiptail --title "NixOS LXC Manager" --menu "Choose an action:" 15 60 4 \
+        "1" "Create new NixOS container" \
+        "2" "Enter container shell" \
+        "3" "Update container" \
+        "4" "Exit" 3>&1 1>&2 2>&3) || exit 0
+
+    case "$choice" in
+    1)
+        CT_NAME=$(whiptail --inputbox "Enter container name (leave empty for auto)" 8 60 "$CT_NAME" 3>&1 1>&2 2>&3) || exit 1
+        CT_PASSWORD=$(whiptail --passwordbox "Enter root password (leave empty for none)" 8 60 3>&1 1>&2 2>&3) || exit 1
+        CT_SSH_KEYS=$(whiptail --inputbox "Path to SSH public key file (optional)" 8 60 "$CT_SSH_KEYS" 3>&1 1>&2 2>&3) || exit 1
+        
+        # Show settings confirmation
+        if show_settings_confirmation; then
+            create_nixos_ct
+        fi
+        ;;
+    2)
+        local ctid
+        ctid=$(whiptail --inputbox "Enter container ID:" 8 60 3>&1 1>&2 2>&3) || exit 1
+        enter_container "$ctid"
+        ;;
+    3)
+        local ctid
+        ctid=$(whiptail --inputbox "Enter container ID to update:" 8 60 3>&1 1>&2 2>&3) || exit 1
+        update_nixos "$ctid"
+        ;;
+    4) exit 0 ;;
+    esac
 }
 
 interactive_create() {
@@ -338,12 +448,17 @@ interactive_create() {
 }
 
 enter_container() {
-    pct enter "$1"
+    msg_info "Entering container $1..."
+    pct exec "$1" -- /bin/sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; exec bash'
 }
 
 update_nixos() {
-    msg_info "Updating NixOS in container $1"
-    pct exec "$1" -- bash -c "nixos-rebuild switch --upgrade"
+    msg_info "Updating NixOS in container $1..."
+    pct exec "$1" -- /bin/sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; nix-channel --update && nixos-rebuild switch --upgrade' || {
+        msg_error "Failed to update container $1. Please check the container logs for more details."
+        exit 1
+    }
+    msg_info "Successfully updated container $1"
 }
 
 show_help() {
@@ -381,9 +496,15 @@ show_help() {
 main() {
     check_dependencies
 
+    # If no arguments and in an interactive terminal, run the interactive mode
     if [ $# -eq 0 ]; then
-        show_help
-        exit 1
+        if [ "$INTERACTIVE" = true ]; then
+            run_interactive_mode
+            exit 0
+        else
+            show_help
+            exit 1
+        fi
     fi
 
     ACTION="${1:-}"
@@ -391,9 +512,13 @@ main() {
 
     case "$ACTION" in
     create)
-        # Non-interactive mode if flags are present
+        # Non-interactive mode if flags are present, otherwise interactive
         if [ "$#" -gt 0 ]; then
             INTERACTIVE=false
+        elif [ "$INTERACTIVE" = true ]; then
+            # If no flags but in an interactive terminal, run interactive creation
+            interactive_create
+            exit 0
         fi
 
         while [ "$#" -gt 0 ]; do
