@@ -147,44 +147,27 @@ configure_nixos_ct() {
     local ssh_keys="$4"
 
     local temp_config
-    temp_config=$(mktemp)
-    cat > "$temp_config" <<EOF
-{
-  imports = [ ./hardware-configuration.nix ];
-  networking.hostName = "$hostname";
-  system.stateVersion = "23.05";
-
-  # User configuration
-  users.users.root.isNormalUser = true;
-  users.users.root.password = "$password";
-  users.users.root.openssh.authorizedKeys.keys = [ $ssh_keys ];
-
-  # SSH daemon
-  services.openssh.enable = true;
-}
-EOF
-
-    msg_info "Pushing NixOS configuration to container $ctid"
-    pct push "$ctid" "$temp_config" /etc/nixos/configuration.nix
-    rm "$temp_config"
-
-    msg_info "Rebuilding NixOS configuration in container $ctid"
-    pct exec "$ctid" -- bash -c "nixos-rebuild switch"
+    # Configuration is now handled by the setup-nixos.sh script that gets pushed to the container
 }
 
 create_nixos_ct() {
+    # Get the image name and ensure it's in the correct location
     local image_name
     image_name=$(prepare_nixos_image "$NIXOS_VERSION")
     
-    # Format template path based on storage type
-    local template_path
-    if [[ "$CT_STORAGE" == *"lvm"* ]]; then
-        # For LVM storage, use format: local-lvm:vztmpl/nixos-version-x86_64-linux.tar.xz
-        template_path="$CT_STORAGE:vztmpl/$(basename "$image_name")"
-    else
-        # For directory-based storage, use the full path
-        template_path="$CT_STORAGE:vztmpl/$image_name"
+    # Ensure the template is in the correct location for Proxmox
+    local template_dir="/var/lib/vz/template/cache"
+    local template_name="nixos-${NIXOS_VERSION}-x86_64-linux.tar.xz"
+    local template_src="${template_dir}/${template_name}"
+    
+    # Copy the template to the Proxmox template directory if needed
+    if [ ! -f "$template_src" ]; then
+        mkdir -p "$template_dir"
+        cp "$image_name" "$template_src"
     fi
+    
+    # Use the correct format for pct create: storage:vztmpl/template_name
+    local template_path="local:vztmpl/$template_name"
 
     local ip_config
     if [ "$CT_IP" = "dhcp" ]; then
@@ -193,6 +176,91 @@ create_nixos_ct() {
         ip_config="name=eth0,bridge=$CT_BRIDGE,ip=$CT_IP/$CT_CIDR,gw=$CT_GW"
     fi
 
+    # Create a temporary directory for our scripts
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    # Initialize ssh_keys_content
+    local ssh_keys_content=""
+    if [ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ]; then
+        ssh_keys_content=$(sed 's/.*/"&"/' "$CT_SSH_KEYS" | tr '\n' ' ')
+    fi
+    
+    # Determine if the container is privileged
+    local is_privileged_bool="false"
+    if [ "${CT_UNPRIVILEGED:-1}" -eq 0 ]; then
+        is_privileged_bool="true"
+    fi
+
+    # Create the NixOS configuration
+    cat > "${temp_dir}/configuration.nix" << EOCONFIG
+{ config, pkgs, lib, modulesPath, ... }: {
+  imports = [
+    (modulesPath + "/virtualisation/proxmox-lxc.nix")
+  ];
+
+  # Basic system settings
+  boot.loader.grub.enable = false;
+  networking.hostName = "$CT_NAME";
+  time.timeZone = "Etc/UTC";
+  system.stateVersion = "$NIXOS_VERSION";
+
+  # Proxmox LXC settings
+  nix.settings.sandbox = false;
+  proxmoxLXC.privileged = $is_privileged_bool;
+  proxmoxLXC.manageNetwork = false;
+
+  # SSH settings
+  services.openssh = {
+    enable = true;
+    settings = {
+      PasswordAuthentication = true;
+      PermitRootLogin = "yes";
+    };
+  };
+  security.pam.services.sshd.allowNullPassword = true; # For root login with empty password
+
+  users.users.root.openssh.authorizedKeys.keys = [
+    $ssh_keys_content
+  ];
+}
+EOCONFIG
+
+    # Create setup script
+    cat > "${temp_dir}/setup-nixos.sh" << 'EOF'
+#!/usr/bin/env sh
+set -e
+
+echo "[SETUP] Running NixOS setup script inside the container..."
+
+# Set up the Nix environment for commands like nixos-rebuild
+if [ -f /etc/set-environment ]; then
+    . /etc/set-environment
+fi
+
+# Source environment variables passed from the host
+if [ -f /etc/profile.d/nixos-lxc.sh ]; then
+    . /etc/profile.d/nixos-lxc.sh
+fi
+
+# echo "[SETUP] Generating hardware configuration..."
+# nixos-generate-config
+
+if [ -n "$CT_PASSWORD" ]; then
+    echo "[SETUP] Setting root password..."
+    echo "root:$CT_PASSWORD" | chpasswd
+fi
+
+echo "[SETUP] Rebuilding NixOS system..."
+nix-channel --update
+nixos-rebuild switch --upgrade
+
+echo "[SETUP] NixOS setup complete."
+EOF
+    chmod +x "${temp_dir}/setup-nixos.sh"
+
+    # Create the container
     msg_info "Creating container $CT_ID ($CT_NAME)"
     pct create "$CT_ID" "$template_path" \
         --hostname "$CT_NAME" \
@@ -207,18 +275,21 @@ create_nixos_ct() {
         --features "nesting=$CT_NESTING" \
         --tags "$CT_TAGS"
 
+    # Start the container
     msg_info "Starting container $CT_ID"
     pct start "$CT_ID"
 
-    # Wait for the container to get an IP address
+    # Wait for the container to start
     sleep 5
 
-    local ssh_keys_content=""
-    if [ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ]; then
-        ssh_keys_content=$(sed 's/.*/"&"/' "$CT_SSH_KEYS" | tr '\n' ' ')
-    fi
+    # Push configuration files
+    msg_info "Pushing configuration to container $CT_ID"
+    pct push "$CT_ID" "${temp_dir}/configuration.nix" /etc/nixos/configuration.nix
+    pct push "$CT_ID" "${temp_dir}/setup-nixos.sh" /root/setup-nixos.sh --perms 0755
 
-    configure_nixos_ct "$CT_ID" "$CT_NAME" "$CT_PASSWORD" "$ssh_keys_content"
+    # Run the setup script
+    msg_info "Running setup script in container $CT_ID"
+    pct exec "$CT_ID" -- sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; /root/setup-nixos.sh'
 
     msg_info "Container $CT_ID created successfully."
 }
