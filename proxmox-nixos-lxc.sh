@@ -436,11 +436,15 @@ interactive_create() {
         else
             CT_DNS="1.1.1.1"
         fi
+        # DNS is not explicitly set by user when using DHCP
+        CT_DNS_SET_BY_USER=0
     else
         CT_IP=$(whiptail --inputbox "Enter IP Address (e.g., 192.168.1.100):" 8 78 --title "IP Address" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
         CT_CIDR=$(whiptail --inputbox "Enter CIDR (e.g., 24):" 8 78 "24" --title "CIDR" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
         CT_GW=$(whiptail --inputbox "Enter Gateway (e.g., 192.168.1.1):" 8 78 --title "Gateway" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
         CT_DNS=$(whiptail --inputbox "Enter DNS Server (e.g., 1.1.1.1):" 8 78 "1.1.1.1" --title "DNS Server" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+        # DNS is explicitly set by user
+        CT_DNS_SET_BY_USER=1
     fi
     
     CT_BRIDGE=$(whiptail --inputbox "Enter Bridge Interface (e.g., vmbr0):" 8 78 "vmbr0" --title "Network Bridge" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
@@ -490,14 +494,34 @@ interactive_create() {
         recreate_cmd+="--disk $CT_DISK "
         recreate_cmd+="--storage \"$CT_STORAGE\" "
         recreate_cmd+="--bridge \"$CT_BRIDGE\" "
-        [ -n "$CT_IP" ] && [ "$CT_IP" != "dhcp" ] && recreate_cmd+="--ip $CT_IP --cidr $CT_CIDR --gw $CT_GW "
-        [ "$CT_IP" = "dhcp" ] && recreate_cmd+="--ip dhcp "
-        recreate_cmd+="--dns \"$CT_DNS\" "
+        
+        # Only include IP settings if not using DHCP
+        if [ "$CT_IP" = "dhcp" ]; then
+            recreate_cmd+="--ip dhcp "
+        else
+            recreate_cmd+="--ip $CT_IP --cidr $CT_CIDR --gw $CT_GW "
+            # Only include DNS if explicitly set (not inherited from host)
+            if [ -n "${CT_DNS_SET_BY_USER:-}" ]; then
+                recreate_cmd+="--dns \"$CT_DNS\" "
+            fi
+        fi
+        
+        # Only include password if set
         [ -n "$CT_PASSWORD" ] && recreate_cmd+="--password \"$CT_PASSWORD\" "
+        
+        # Only include SSH keys if set
         [ -n "$CT_SSH_KEYS" ] && recreate_cmd+="--ssh-keys \"$CT_SSH_KEYS\" "
-        [ "$CT_START_ON_BOOT" = "1" ] && recreate_cmd+="--start-on-boot "
-        [ "$CT_UNPRIVILEGED" = "1" ] && recreate_cmd+="--unprivileged "
-        [ "$CT_NESTING" = "1" ] && recreate_cmd+="--nesting "
+        
+        # Only include start-on-boot if different from default (default: ON)
+        [ "$CT_START_ON_BOOT" != "1" ] && recreate_cmd+="--no-start-on-boot "
+        
+        # Only include unprivileged if different from default (default: ON)
+        [ "$CT_UNPRIVILEGED" != "1" ] && recreate_cmd+="--no-unprivileged "
+        
+        # Only include nesting if different from default (default: ON)
+        [ "$CT_NESTING" != "1" ] && recreate_cmd+="--no-nesting "
+        
+        # Always include version
         recreate_cmd+="--version $NIXOS_VERSION"
         
         echo -e "\nContainer $CT_ID created successfully."
