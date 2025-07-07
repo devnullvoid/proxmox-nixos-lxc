@@ -179,7 +179,12 @@ create_nixos_ct() {
     # Create a temporary directory for our scripts
     local temp_dir
     temp_dir=$(mktemp -d)
-    trap 'rm -rf -- "$temp_dir"' EXIT
+    cleanup_temp_dir() {
+        if [ -n "$temp_dir" ] && [ -d "$temp_dir" ]; then
+            rm -rf -- "$temp_dir"
+        fi
+    }
+    trap cleanup_temp_dir EXIT
 
     # Initialize ssh_keys_content
     local ssh_keys_content=""
@@ -372,78 +377,141 @@ show_settings_confirmation() {
 }
 
 run_interactive_mode() {
-    local choice
-    choice=$(whiptail --title "NixOS LXC Manager" --menu "Choose an action:" 15 60 4 \
-        "1" "Create new NixOS container" \
-        "2" "Enter container shell" \
-        "3" "Update container" \
-        "4" "Exit" 3>&1 1>&2 2>&3) || exit 0
+    while true; do
+        local choice
+        choice=$(whiptail --title "NixOS LXC Manager" --menu "Choose an action:" 15 60 4 \
+            "1" "Create new NixOS container" \
+            "2" "Enter container shell" \
+            "3" "Update container" \
+            "4" "Exit" 3>&1 1>&2 2>&3) || exit 0
 
-    case "$choice" in
-    1)
-        CT_NAME=$(whiptail --inputbox "Enter container name (leave empty for auto)" 8 60 "$CT_NAME" 3>&1 1>&2 2>&3) || exit 1
-        CT_PASSWORD=$(whiptail --passwordbox "Enter root password (leave empty for none)" 8 60 3>&1 1>&2 2>&3) || exit 1
-        CT_SSH_KEYS=$(whiptail --inputbox "Path to SSH public key file (optional)" 8 60 "$CT_SSH_KEYS" 3>&1 1>&2 2>&3) || exit 1
-        
-        # Show settings confirmation
-        if show_settings_confirmation; then
-            create_nixos_ct
-        fi
-        ;;
-    2)
-        local ctid
-        ctid=$(whiptail --inputbox "Enter container ID:" 8 60 3>&1 1>&2 2>&3) || exit 1
-        enter_container "$ctid"
-        ;;
-    3)
-        local ctid
-        ctid=$(whiptail --inputbox "Enter container ID to update:" 8 60 3>&1 1>&2 2>&3) || exit 1
-        update_nixos "$ctid"
-        ;;
-    4) exit 0 ;;
-    esac
+        case "$choice" in
+        1)
+            # Use the full interactive creation flow
+            # This will handle its own exit after successful creation
+            interactive_create
+            # If we get here, creation was cancelled
+            ;;
+        2)
+            local ctid
+            ctid=$(whiptail --inputbox "Enter container ID:" 8 60 3>&1 1>&2 2>&3) || continue
+            enter_container "$ctid"
+            ;;
+        3)
+            local ctid
+            ctid=$(whiptail --inputbox "Enter container ID to update:" 8 60 3>&1 1>&2 2>&3) || continue
+            update_nixos "$ctid"
+            ;;
+        4)
+            exit 0
+            ;;
+        esac
+    done
 }
 
 interactive_create() {
+    # Set default values
     local next_id
     next_id=$(get_next_ctid)
-    CT_ID=$(whiptail --inputbox "Enter Container ID:" 8 78 "$next_id" --title "Container ID" 3>&1 1>&2 2>&3)
-    [ -z "$CT_ID" ] && msg_error "Container ID cannot be empty."
+    
+    # Basic container settings
+    CT_ID=$(whiptail --inputbox "Enter Container ID:" 8 78 "$next_id" --title "Container ID" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    [ -z "$CT_ID" ] && { msg_error "Container ID cannot be empty."; exit 1; }
 
-    CT_NAME=$(whiptail --inputbox "Enter Container Name (hostname):" 8 78 "nixos-ct" --title "Container Name" 3>&1 1>&2 2>&3)
-    [ -z "$CT_NAME" ] && msg_error "Container Name cannot be empty."
+    CT_NAME=$(whiptail --inputbox "Enter Container Name (hostname):" 8 78 "nixos-ct" --title "Container Name" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    [ -z "$CT_NAME" ] && { msg_error "Container Name cannot be empty."; exit 1; }
 
+    # Get storage pool
     get_storage_pool
 
-    CT_CPUS=$(whiptail --inputbox "Enter number of CPU cores:" 8 78 "$CT_CPUS" --title "CPU Cores" 3>&1 1>&2 2>&3)
-    CT_MEMORY=$(whiptail --inputbox "Enter RAM in MB:" 8 78 "$CT_MEMORY" --title "Memory (RAM)" 3>&1 1>&2 2>&3)
-    CT_SWAP=$(whiptail --inputbox "Enter Swap in MB:" 8 78 "$CT_SWAP" --title "Swap" 3>&1 1>&2 2>&3)
-    CT_DISK=$(whiptail --inputbox "Enter Disk Size in GB:" 8 78 "$CT_DISK" --title "Disk Size" 3>&1 1>&2 2>&3)
+    # Resource allocation
+    CT_CPUS=$(whiptail --inputbox "Enter number of CPU cores (e.g., 2):" 8 78 "${CT_CPUS:-2}" --title "CPU Cores" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    CT_MEMORY=$(whiptail --inputbox "Enter RAM in MB (e.g., 2048):" 8 78 "${CT_MEMORY:-2048}" --title "Memory (RAM)" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    CT_SWAP=$(whiptail --inputbox "Enter Swap in MB (e.g., 512):" 8 78 "${CT_SWAP:-512}" --title "Swap" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    CT_DISK=$(whiptail --inputbox "Enter Disk Size in GB (e.g., 10):" 8 78 "${CT_DISK:-10}" --title "Disk Size" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
 
     # Network configuration
-    if whiptail --yesno "Use DHCP for network configuration?" 8 78; then
+    if whiptail --yesno "Use DHCP for network configuration?" 8 78 --defaultno; then
         CT_IP="dhcp"
+        CT_CIDR=""
+        CT_GW=""
     else
-        CT_IP=$(whiptail --inputbox "Enter IP Address (e.g., 192.168.1.100):" 8 78 --title "IP Address" 3>&1 1>&2 2>&3)
-        CT_CIDR=$(whiptail --inputbox "Enter CIDR (e.g., 24):" 8 78 "$CT_CIDR" --title "CIDR" 3>&1 1>&2 2>&3)
-        CT_GW=$(whiptail --inputbox "Enter Gateway (e.g., 192.168.1.1):" 8 78 --title "Gateway" 3>&1 1>&2 2>&3)
+        CT_IP=$(whiptail --inputbox "Enter IP Address (e.g., 192.168.1.100):" 8 78 --title "IP Address" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+        CT_CIDR=$(whiptail --inputbox "Enter CIDR (e.g., 24):" 8 78 "24" --title "CIDR" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+        CT_GW=$(whiptail --inputbox "Enter Gateway (e.g., 192.168.1.1):" 8 78 --title "Gateway" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
     fi
-    CT_DNS=$(whiptail --inputbox "Enter DNS Server:" 8 78 "$CT_DNS" --title "DNS Server" 3>&1 1>&2 2>&3)
+    
+    CT_DNS=$(whiptail --inputbox "Enter DNS Server (e.g., 1.1.1.1):" 8 78 "1.1.1.1" --title "DNS Server" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    CT_BRIDGE=$(whiptail --inputbox "Enter Bridge Interface (e.g., vmbr0):" 8 78 "vmbr0" --title "Network Bridge" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
 
-    # SSH and Password
+    # Security settings
     if whiptail --yesno "Set a root password?" 8 78; then
-        CT_PASSWORD=$(whiptail --passwordbox "Enter root password:" 8 78 --title "Root Password" 3>&1 1>&2 2>&3)
+        CT_PASSWORD=$(whiptail --passwordbox "Enter root password:" 8 78 --title "Root Password" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    else
+        CT_PASSWORD=""
     fi
+    
     if whiptail --yesno "Add SSH public keys?" 8 78; then
         local default_key_path="$HOME/.ssh/id_rsa.pub"
-        CT_SSH_KEYS=$(whiptail --inputbox "Enter path to SSH public keys file:" 8 78 "$default_key_path" --title "SSH Keys" 3>&1 1>&2 2>&3)
+        CT_SSH_KEYS=$(whiptail --inputbox "Enter path to SSH public keys file:" 8 78 "$default_key_path" --title "SSH Keys" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+    else
+        CT_SSH_KEYS=""
     fi
 
-    # Other options
+    # Container options
     if whiptail --yesno "Start container on boot?" 8 78; then
-        CT_START_ON_BOOT="1"
+        CT_START_ON_BOOT=1
     else
-        CT_START_ON_BOOT="0"
+        CT_START_ON_BOOT=0
+    fi
+
+    if whiptail --yesno "Run container in unprivileged mode?" 8 78; then
+        CT_UNPRIVILEGED=1
+    else
+        CT_UNPRIVILEGED=0
+    fi
+
+    if whiptail --yesno "Enable container nesting?" 8 78; then
+        CT_NESTING=1
+    else
+        CT_NESTING=0
+    fi
+
+    # NixOS version
+    NIXOS_VERSION=$(whiptail --inputbox "Enter NixOS version (e.g., 25.05):" 8 78 "25.05" --title "NixOS Version" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
+
+    # Show confirmation with all settings
+    if show_settings_confirmation; then
+        # Create the container
+        create_nixos_ct
+        
+        # After successful creation, show the re-creation command and exit
+        local recreate_cmd="./$(basename "$0") create "
+        recreate_cmd+="--id $CT_ID "
+        recreate_cmd+="--name \"$CT_NAME\" "
+        recreate_cmd+="--cpus $CT_CPUS "
+        recreate_cmd+="--memory $CT_MEMORY "
+        recreate_cmd+="--swap $CT_SWAP "
+        recreate_cmd+="--disk $CT_DISK "
+        recreate_cmd+="--storage \"$CT_STORAGE\" "
+        recreate_cmd+="--bridge \"$CT_BRIDGE\" "
+        [ -n "$CT_IP" ] && [ "$CT_IP" != "dhcp" ] && recreate_cmd+="--ip $CT_IP --cidr $CT_CIDR --gw $CT_GW "
+        [ "$CT_IP" = "dhcp" ] && recreate_cmd+="--ip dhcp "
+        recreate_cmd+="--dns \"$CT_DNS\" "
+        [ -n "$CT_PASSWORD" ] && recreate_cmd+="--password \"$CT_PASSWORD\" "
+        [ -n "$CT_SSH_KEYS" ] && recreate_cmd+="--ssh-keys \"$CT_SSH_KEYS\" "
+        [ "$CT_START_ON_BOOT" = "1" ] && recreate_cmd+="--start-on-boot "
+        [ "$CT_UNPRIVILEGED" = "1" ] && recreate_cmd+="--unprivileged "
+        [ "$CT_NESTING" = "1" ] && recreate_cmd+="--nesting "
+        recreate_cmd+="--version $NIXOS_VERSION"
+        
+        echo -e "\nContainer $CT_ID created successfully."
+        echo -e "\nTo re-create this container, use this command:"
+        echo -e "$recreate_cmd\n"
+        exit 0
+    else
+        msg_info "Container creation cancelled by user."
+        exit 0
     fi
 }
 
