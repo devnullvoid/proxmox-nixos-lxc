@@ -1,71 +1,104 @@
 # Proxmox NixOS LXC Manager
 
-This script simplifies the creation and management of NixOS containers in Proxmox VE.
+A streamlined script for creating and managing NixOS containers in Proxmox VE with secure defaults and an intuitive interface.
 
-## Features
+## ✨ Features
 
-- **Interactive & Non-Interactive Modes**: Run with a user-friendly `whiptail` interface or automate with command-line flags.
-- **Simplified Configuration**: Uses `pct push` to configure containers, avoiding the need to mount ZFS/LVM filesystems.
-- **Proper NixOS Management**: Manages NixOS configurations correctly within the container.
-- **Automated Setup**: Handles downloading the NixOS image and setting up the container environment.
+- **Interactive & Non-Interactive Modes**: Friendly `whiptail` interface or fully scriptable with command-line flags
+- **Secure Defaults**: Containers are unprivileged with nesting enabled by default
+- **Smart Network Configuration**: DHCP enabled by default with automatic host DNS inheritance
+- **Minimal Configuration**: Only essential parameters required, with sensible defaults for everything else
+- **Recreate Commands**: Automatically generates re-creation commands for easy container duplication
+- **NixOS-First**: Properly handles NixOS configuration and updates within the container
 
-## Quick Start
+## 🚀 Quick Start
 
-You can run the script directly from GitHub without needing to download it first:
+Run the script directly from GitHub (requires `sudo`):
 
 ```bash
 curl -sL https://raw.githubusercontent.com/devnullvoid/proxmox-nixos-lxc/main/proxmox-nixos-lxc.sh | sudo bash -s create
 ```
 
-## Usage
+## 📋 Usage
 
 ```
 proxmox-nixos-lxc.sh <action> [options]
 ```
 
-### Actions
+### 🔧 Available Actions
 
-- `create`: Creates a new NixOS container. Can be run interactively or with command-line flags.
-- `shell <ctid>`: Enters the shell of a specified container.
-- `update <ctid>`: Updates the NixOS configuration for a specified container.
-- `configure <ctid>`: Configures user password and SSH keys for a container.
-- `download`: Downloads the NixOS image to the Proxmox template cache.
-- `help`: Displays the help message.
+- `create`: Interactive container creation with guided prompts
+- `shell <ctid>`: Enter the shell of a specified container
+- `update <ctid>`: Update NixOS packages and configuration in a container
+- `download`: Download the NixOS image to Proxmox template cache
+- `help`: Show help message and usage examples
 
-### `create` Options
+### ⚙️ `create` Options
 
-When using the `create` action non-interactively, you can use the following flags:
+When running non-interactively, you can specify these options:
 
-- `--id <id>`: Container ID.
-- `--name <name>`: Container hostname.
-- `--cpus <count>`: Number of CPU cores.
-- `--memory <mb>`: RAM in megabytes.
-- `--swap <mb>`: Swap in megabytes.
-- `--disk <gb>`: Disk size in gigabytes.
-- `--storage <pool>`: Proxmox storage pool.
-- `--bridge <bridge>`: Network bridge.
-- `--ip <ip/cidr|dhcp>`: IP address with CIDR or `dhcp`.
-- `--gw <gateway>`: Network gateway.
-- `--dns <server>`: DNS server.
-- `--tags <tags>`: Comma-separated tags.
-- `--unprivileged <0|1>`: Unprivileged container.
-- `--nesting <0|1>`: Enable nesting.
-- `--password <password>`: Root password.
-- `--ssh-keys <path>`: Path to public SSH keys file.
-- `--start-on-boot <0|1>`: Start container on boot.
+#### Container Settings
+- `--id <id>`: Container ID (auto-detected if not specified)
+- `--name <name>`: Container hostname (required)
+- `--cpus <count>`: Number of CPU cores (default: 1)
+- `--memory <mb>`: RAM in MB (default: 1024)
+- `--swap <mb>`: Swap space in MB (default: 512)
+- `--disk <gb>`: Disk size in GB (default: 8)
+- `--storage <pool>`: Storage pool (default: local-lvm)
+- `--tags <tags>`: Comma-separated tags (optional)
 
-### Example: Create a Container Non-Interactively
+#### Network Settings
+- `--bridge <bridge>`: Network bridge (default: vmbr0)
+- `--ip <ip/cidr|dhcp>`: IP address with CIDR or 'dhcp' (default: dhcp)
+- `--gw <gateway>`: Network gateway (required with static IP)
+- `--dns <server>`: DNS server (optional, inherits from host by default)
 
+#### Security & Access
+- `--password <password>`: Set root password (optional but recommended)
+- `--ssh-keys <path>`: Path to public SSH keys file (optional)
+- `--no-start-on-boot`: Disable auto-start on boot (enabled by default)
+- `--no-unprivileged`: Run as privileged container (not recommended)
+- `--no-nesting`: Disable container nesting (nesting enabled by default)
+
+## 📌 Examples
+
+### Interactive Container Creation
+```bash
+sudo ./proxmox-nixos-lxc.sh create
+```
+
+### Non-Interactive Example with Static IP
 ```bash
 sudo ./proxmox-nixos-lxc.sh create \
-    --id 123 \
-    --name my-nixos-vm \
+    --name my-nixos-app \
     --cpus 2 \
     --memory 2048 \
-    --disk 10 \
+    --disk 20 \
     --storage local-lvm \
     --bridge vmbr0 \
-    --ip dhcp \
-    --password "a-very-secure-password" \
-    --ssh-keys "~/.ssh/id_rsa.pub"
+    --ip 192.168.1.100/24 \
+    --gw 192.168.1.1 \
+    --dns 1.1.1.1 \
+    --password "your-secure-password" \
+    --ssh-keys ~/.ssh/id_rsa.pub
 ```
+
+### Minimal Non-Interactive Example (DHCP)
+```bash
+sudo ./proxmox-nixos-lxc.sh create \
+    --name minimal-nixos \
+    --password "another-secure-password"
+```
+
+## 🔄 Updating Containers
+
+To update NixOS packages in a container:
+```bash
+sudo ./proxmox-nixos-lxc.sh update 101
+```
+
+## 🔒 Security Notes
+
+- Containers are created as unprivileged by default for better security
+- Always use strong passwords or SSH keys for authentication
+- The script will show a re-creation command after successful container creation for easy duplication
