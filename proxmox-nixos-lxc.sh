@@ -140,16 +140,6 @@ prepare_nixos_image() {
     echo "$image_name"
 }
 
-configure_nixos_ct() {
-    local ctid="$1"
-    local hostname="$2"
-    local password="$3"
-    local ssh_keys="$4"
-
-    local temp_config
-    # Configuration is now handled by the setup-nixos.sh script that gets pushed to the container
-}
-
 create_nixos_ct() {
     # Get the image name and ensure it's in the correct location
     local image_name
@@ -278,20 +268,30 @@ echo "[SETUP] NixOS setup complete."
 EOF
     chmod +x "${temp_dir}/setup-nixos.sh"
 
+    # Build the pct create command
+    local pct_cmd=(
+        pct create "$CT_ID" "$template_path"
+        --hostname "$CT_NAME"
+        --cores "$CT_CPUS"
+        --memory "$CT_MEMORY"
+        --swap "$CT_SWAP"
+        --rootfs "$CT_STORAGE:$CT_DISK"
+        --storage "$CT_STORAGE"
+        --net0 "$ip_config"
+        --onboot "$CT_START_ON_BOOT"
+        --unprivileged "$CT_UNPRIVILEGED"
+        --features "nesting=$CT_NESTING"
+        --tags "$CT_TAGS"
+    )
+
+    # Only add --nameserver if explicitly set by user (not inherited from host)
+    if [ "${CT_DNS_SET_BY_USER:-0}" -eq 1 ] && [ -n "$CT_DNS" ]; then
+        pct_cmd+=(--nameserver "$CT_DNS")
+    fi
+
     # Create the container
     msg_info "Creating container $CT_ID ($CT_NAME)"
-    pct create "$CT_ID" "$template_path" \
-        --hostname "$CT_NAME" \
-        --cores "$CT_CPUS" \
-        --memory "$CT_MEMORY" \
-        --swap "$CT_SWAP" \
-        --rootfs "$CT_STORAGE:$CT_DISK" \
-        --storage "$CT_STORAGE" \
-        --net0 "$ip_config" \
-        --onboot "$CT_START_ON_BOOT" \
-        --unprivileged "$CT_UNPRIVILEGED" \
-        --features "nesting=$CT_NESTING" \
-        --tags "$CT_TAGS"
+    "${pct_cmd[@]}"
 
     # Start the container
     msg_info "Starting container $CT_ID"
@@ -644,46 +644,6 @@ main() {
             CT_IP="dhcp"
         fi
         create_nixos_ct
-        ;;
-    configure)
-        [ -z "${1:-}" ] && msg_error "Action 'configure' requires a container ID."
-        CT_ID="$1"
-        shift
-
-        while [ "$#" -gt 0 ]; do
-            case "$1" in
-            --password)
-                CT_PASSWORD="$2"
-                shift
-                ;;
-            --ssh-keys)
-                CT_SSH_KEYS="$2"
-                shift
-                ;;
-            *)
-                msg_error "Unknown option for 'configure': $1"
-                ;;
-            esac
-            shift
-        done
-
-        # Fetch required info from the existing container
-        local unprivileged_config
-        unprivileged_config=$(pct config "$CT_ID" | grep 'unprivileged:' || true)
-        if [ -n "$unprivileged_config" ]; then
-            CT_UNPRIVILEGED=$(echo "$unprivileged_config" | awk '{print $2}')
-        else
-            # If the 'unprivileged' line is missing, the container is privileged.
-            CT_UNPRIVILEGED=0
-        fi
-
-        local hostname
-        hostname=$(pct config "$CT_ID" | grep 'hostname:' | awk '{print $2}')
-        local ssh_keys_content=""
-        if [ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ]; then
-            ssh_keys_content=$(sed 's/.*/"&"/' "$CT_SSH_KEYS" | tr '\n' ' ')
-        fi
-        configure_nixos_ct "$CT_ID" "$hostname" "$CT_PASSWORD" "$ssh_keys_content"
         ;;
     shell)
         [ -z "${1:-}" ] && msg_error "Action 'shell' requires a container ID."
