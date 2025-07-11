@@ -219,6 +219,18 @@ create_nixos_ct() {
   proxmoxLXC.privileged = $is_privileged_bool;
   proxmoxLXC.manageNetwork = false;
 
+  nix.settings.trusted-users = [ "nixos" ];
+  users.users.nixos =
+    {
+      isNormalUser = true;
+      initialPassword = "$CT_PASSWORD";
+      extraGroups = [ "wheel" ];
+      openssh.authorizedKeys.keys = [
+        "$ssh_keys_content"
+      ];
+    };
+  security.sudo.wheelNeedsPassword = false;
+
   # SSH settings
   services.openssh = {
     enable = true;
@@ -227,10 +239,10 @@ create_nixos_ct() {
       PermitRootLogin = "yes";
     };
   };
-  security.pam.services.sshd.allowNullPassword = true; # For root login with empty password
+  #security.pam.services.sshd.allowNullPassword = true; # For root login with empty password
 
   users.users.root.openssh.authorizedKeys.keys = [
-    $ssh_keys_content
+    "$ssh_keys_content"
   ];
 }
 EOCONFIG
