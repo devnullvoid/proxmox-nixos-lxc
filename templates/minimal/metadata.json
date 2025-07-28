@@ -1,0 +1,17 @@
+{
+  "name": "Minimal NixOS Container",
+  "description": "A minimal NixOS container with basic system configuration",
+  "version": "1.0.0",
+  "author": "Proxmox NixOS LXC Manager",
+  "category": "system",
+  "tags": ["minimal", "basic", "system"],
+  "ports": [],
+  "dependencies": [],
+  "resources": {
+    "min_cpus": 1,
+    "min_memory": 512,
+    "min_disk": 4
+  },
+  "variables": {},
+  "post_install": []
+} 

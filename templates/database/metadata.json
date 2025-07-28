@@ -1,0 +1,26 @@
+{
+  "name": "Database Server Template",
+  "description": "NixOS container configured as a PostgreSQL database server",
+  "version": "1.0.0",
+  "author": "Proxmox NixOS LXC Manager",
+  "category": "database",
+  "tags": ["database", "postgresql", "sql", "server"],
+  "ports": [5432],
+  "dependencies": [],
+  "resources": {
+    "min_cpus": 2,
+    "min_memory": 2048,
+    "min_disk": 20
+  },
+  "variables": {
+    "db_name": "mydb",
+    "db_user": "postgres",
+    "db_password": "changeme"
+  },
+  "post_install": [
+    "Set a secure password for the postgres user",
+    "Create your databases and users",
+    "Configure backup strategy",
+    "Review and adjust PostgreSQL configuration"
+  ]
+} 

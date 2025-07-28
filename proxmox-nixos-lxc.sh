@@ -8,6 +8,8 @@ set -euo pipefail
 # - Uses pct push for configuration (no LVM/ZFS mounting required)
 # - Proper NixOS configuration management
 # - Automatic environment setup for containers
+# - Template support for pre-configured services
+# - Flake support for reproducible configurations
 #
 # Usage:
 #   Create a new container: $0 create [options]
@@ -35,6 +37,15 @@ CT_NESTING="1"
 CT_PASSWORD=""
 CT_SSH_KEYS=""
 CT_START_ON_BOOT="1"
+CT_TEMPLATE=""
+CT_USE_FLAKE="false"
+CT_FLAKE_URL=""
+CT_FLAKE_REF=""
+CT_FLAKE_INPUT=""
+
+# --- Template Configuration ---
+TEMPLATES_DIR="$(dirname "$0")/templates"
+DEFAULT_TEMPLATE="minimal"
 
 # --- Utility Functions ---
 
@@ -42,6 +53,158 @@ check_dependencies() {
     if ! command -v whiptail &> /dev/null && [ "$INTERACTIVE" = true ]; then
         msg_error "whiptail is not installed. Please install it to use the interactive mode."
     fi
+}
+
+# Template management functions
+list_available_templates() {
+    if [ ! -d "$TEMPLATES_DIR" ]; then
+        echo "No templates directory found at $TEMPLATES_DIR"
+        return 1
+    fi
+    
+    local templates=()
+    for template_dir in "$TEMPLATES_DIR"/*/; do
+        if [ -d "$template_dir" ]; then
+            local template_name
+            template_name=$(basename "$template_dir")
+            if [ -f "$template_dir/metadata.json" ]; then
+                templates+=("$template_name")
+            fi
+        fi
+    done
+    
+    if [ ${#templates[@]} -eq 0 ]; then
+        echo "No valid templates found in $TEMPLATES_DIR"
+        return 1
+    fi
+    
+    printf '%s\n' "${templates[@]}"
+}
+
+get_template_metadata() {
+    local template="$1"
+    local metadata_file="$TEMPLATES_DIR/$template/metadata.json"
+    
+    if [ ! -f "$metadata_file" ]; then
+        msg_error "Template '$template' not found or missing metadata.json"
+    fi
+    
+    cat "$metadata_file"
+}
+
+get_template_config() {
+    local template="$1"
+    local config_file="$TEMPLATES_DIR/$template/configuration.nix"
+    
+    if [ ! -f "$config_file" ]; then
+        msg_error "Template '$template' configuration.nix not found"
+    fi
+    
+    cat "$config_file"
+}
+
+get_template_readme() {
+    local template="$1"
+    local readme_file="$TEMPLATES_DIR/$template/README.md"
+    
+    if [ ! -f "$readme_file" ]; then
+        echo "No README available for template '$template'"
+        return 1
+    fi
+    
+    cat "$readme_file"
+}
+
+validate_template() {
+    local template="$1"
+    local template_dir="$TEMPLATES_DIR/$template"
+    
+    if [ ! -d "$template_dir" ]; then
+        msg_error "Template '$template' not found"
+    fi
+    
+    if [ ! -f "$template_dir/configuration.nix" ]; then
+        msg_error "Template '$template' missing configuration.nix"
+    fi
+    
+    if [ ! -f "$template_dir/metadata.json" ]; then
+        msg_error "Template '$template' missing metadata.json"
+    fi
+    
+    msg_info "Template '$template' is valid"
+}
+
+# Flake management functions
+validate_flake_url() {
+    local flake_url="$1"
+    
+    # Basic URL validation
+    if [[ ! "$flake_url" =~ ^(https?://|git\+https?://|github:|gitlab:|sourcehut:) ]]; then
+        msg_error "Invalid flake URL format: $flake_url"
+    fi
+}
+
+generate_flake_config() {
+    local flake_url="$1"
+    local flake_ref="${2:-}"
+    local flake_input="${3:-}"
+    
+    cat << EOF
+{ config, pkgs, lib, modulesPath, ... }: {
+  imports = [
+    (modulesPath + "/virtualisation/proxmox-lxc.nix")
+  ];
+
+  # Basic system settings
+  boot.loader.grub.enable = false;
+  networking.hostName = "$CT_NAME";
+  time.timeZone = "Etc/UTC";
+  system.stateVersion = "$NIXOS_VERSION";
+
+  # Proxmox LXC settings
+  nix.settings.sandbox = false;
+  proxmoxLXC.privileged = $([ "${CT_UNPRIVILEGED:-1}" -eq 0 ] && echo "true" || echo "false");
+  proxmoxLXC.manageNetwork = false;
+
+  # Flake configuration
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  
+  # Import flake
+  imports = [
+    (import (fetchTarball {
+      url = "$flake_url";
+      ${flake_ref:+sha256 = "$flake_ref";}
+    }) {
+      ${flake_input:+config = { $flake_input = true; };}
+    })
+  ];
+
+  # User configuration
+  nix.settings.trusted-users = [ "nixos" ];
+  users.users.nixos = {
+    isNormalUser = true;
+    initialPassword = "$CT_PASSWORD";
+    extraGroups = [ "wheel" ];
+    openssh.authorizedKeys.keys = [
+      "$([ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ] && sed 's/.*/"&"/' "$CT_SSH_KEYS" | tr '\n' ' ' || echo "")"
+    ];
+  };
+  security.sudo.wheelNeedsPassword = false;
+
+  # SSH settings
+  services.openssh = {
+    enable = true;
+    settings = {
+      PasswordAuthentication = true;
+      PermitRootLogin = "yes";
+    };
+  };
+
+  users.users.root.openssh.authorizedKeys.keys = [
+    "$([ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ] && sed 's/.*/"&"/' "$CT_SSH_KEYS" | tr '\n' ' ' || echo "")"
+  ];
+}
+EOF
 }
 
 # Check if running in an interactive terminal
@@ -201,8 +364,28 @@ create_nixos_ct() {
         is_privileged_bool="true"
     fi
 
-    # Create the NixOS configuration
-    cat > "${temp_dir}/configuration.nix" << EOCONFIG
+    # Create the NixOS configuration based on template or flake
+    if [ "$CT_USE_FLAKE" = "true" ] && [ -n "$CT_FLAKE_URL" ]; then
+        msg_info "Using flake configuration from: $CT_FLAKE_URL"
+        generate_flake_config "$CT_FLAKE_URL" "$CT_FLAKE_REF" "$CT_FLAKE_INPUT" > "${temp_dir}/configuration.nix"
+    elif [ -n "$CT_TEMPLATE" ]; then
+        msg_info "Using template: $CT_TEMPLATE"
+        validate_template "$CT_TEMPLATE"
+        get_template_config "$CT_TEMPLATE" > "${temp_dir}/configuration.nix"
+        
+        # Apply template-specific variables
+        local template_metadata
+        template_metadata=$(get_template_metadata "$CT_TEMPLATE")
+        
+        # Extract and apply template variables if needed
+        # This is a basic implementation - could be enhanced with jq for more complex metadata
+        if echo "$template_metadata" | grep -q '"variables"'; then
+            msg_info "Applying template variables..."
+            # TODO: Implement variable substitution from template metadata
+        fi
+    else
+        # Default minimal configuration
+        cat > "${temp_dir}/configuration.nix" << EOCONFIG
 { config, pkgs, lib, modulesPath, ... }: {
   imports = [
     (modulesPath + "/virtualisation/proxmox-lxc.nix")
@@ -239,13 +422,13 @@ create_nixos_ct() {
       PermitRootLogin = "yes";
     };
   };
-  #security.pam.services.sshd.allowNullPassword = true; # For root login with empty password
 
   users.users.root.openssh.authorizedKeys.keys = [
     "$ssh_keys_content"
   ];
 }
 EOCONFIG
+    fi
 
     # Create setup script
     cat > "${temp_dir}/setup-nixos.sh" << 'EOF'
@@ -264,8 +447,12 @@ if [ -f /etc/profile.d/nixos-lxc.sh ]; then
     . /etc/profile.d/nixos-lxc.sh
 fi
 
-# echo "[SETUP] Generating hardware configuration..."
-# nixos-generate-config
+# Enable flakes if using flake configuration
+if [ -f /etc/nixos/configuration.nix ] && grep -q "experimental-features" /etc/nixos/configuration.nix; then
+    echo "[SETUP] Enabling Nix flakes..."
+    mkdir -p /etc/nix
+    echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+fi
 
 if [ -n "$CT_PASSWORD" ]; then
     echo "[SETUP] Setting root password..."
@@ -488,6 +675,39 @@ interactive_create() {
     CT_UNPRIVILEGED=1
     CT_NESTING=1
 
+    # Template selection
+    local available_templates
+    available_templates=$(list_available_templates 2>/dev/null || echo "")
+    
+    if [ -n "$available_templates" ]; then
+        local template_choice
+        template_choice=$(whiptail --title "Select Template" --menu "Choose a template (or skip for minimal):" 15 60 6 \
+            "minimal" "Basic NixOS container" \
+            "custom" "Use custom template" \
+            "flake" "Use Nix flake" \
+            3>&1 1>&2 2>&3) || template_choice="minimal"
+        
+        case "$template_choice" in
+            "custom")
+                local template_list
+                template_list=$(echo "$available_templates" | tr '\n' ' ')
+                CT_TEMPLATE=$(whiptail --title "Select Template" --menu "Choose a template:" 15 60 6 $template_list 3>&1 1>&2 2>&3) || CT_TEMPLATE=""
+                ;;
+            "flake")
+                CT_USE_FLAKE="true"
+                CT_FLAKE_URL=$(whiptail --inputbox "Enter flake URL:" 8 78 "github:owner/repo" --title "Flake URL" 3>&1 1>&2 2>&3) || CT_FLAKE_URL=""
+                if [ -n "$CT_FLAKE_URL" ]; then
+                    CT_FLAKE_REF=$(whiptail --inputbox "Enter flake reference (optional):" 8 78 "" --title "Flake Reference" 3>&1 1>&2 2>&3) || CT_FLAKE_REF=""
+                    CT_FLAKE_INPUT=$(whiptail --inputbox "Enter flake input (optional):" 8 78 "" --title "Flake Input" 3>&1 1>&2 2>&3) || CT_FLAKE_INPUT=""
+                fi
+                ;;
+            *)
+                CT_TEMPLATE=""
+                CT_USE_FLAKE="false"
+                ;;
+        esac
+    fi
+
     # NixOS version
     NIXOS_VERSION=$(whiptail --inputbox "Enter NixOS version (e.g., 25.05):" 8 78 "25.05" --title "NixOS Version" 3>&1 1>&2 2>&3) || { msg_error "Container creation cancelled."; exit 1; }
 
@@ -568,6 +788,8 @@ show_help() {
     echo "  update <ctid>         Update NixOS in a container"
     echo "  configure <ctid>      Configure user password and SSH keys"
     echo "  download              Download the NixOS image"
+    echo "  templates             List available templates"
+    echo "  template-info <name>  Show template information"
     echo "  help                  Show this help message"
     echo ""
     echo "'create' options:"
@@ -588,6 +810,10 @@ show_help() {
     echo "  --password <pass>     Root password"
     echo "  --ssh-keys <path>     Path to public SSH keys file"
     echo "  --start-on-boot <0|1> Start container on boot"
+    echo "  --template <name>     Use template configuration"
+    echo "  --flake-url <url>     Use Nix flake URL"
+    echo "  --flake-ref <ref>     Flake reference (optional)"
+    echo "  --flake-input <input> Flake input (optional)"
 }
 
 # --- Main Logic ---
@@ -639,6 +865,10 @@ main() {
             --password) CT_PASSWORD="$2"; shift;; 
             --ssh-keys) CT_SSH_KEYS="$2"; shift;; 
             --start-on-boot) CT_START_ON_BOOT="$2"; shift;; 
+            --template) CT_TEMPLATE="$2"; shift;; 
+            --flake-url) CT_FLAKE_URL="$2"; CT_USE_FLAKE="true"; shift;; 
+            --flake-ref) CT_FLAKE_REF="$2"; shift;; 
+            --flake-input) CT_FLAKE_INPUT="$2"; shift;; 
             *)
                 show_help
                 msg_error "Unknown option for 'create': $1"
@@ -667,6 +897,19 @@ main() {
         ;;
     download)
         prepare_nixos_image "$NIXOS_VERSION"
+        ;;
+    templates)
+        list_available_templates
+        ;;
+    template-info)
+        [ -z "${1:-}" ] && msg_error "Action 'template-info' requires a template name."
+        echo "=== Template: $1 ==="
+        echo ""
+        echo "Metadata:"
+        get_template_metadata "$1" 2>/dev/null || echo "No metadata available"
+        echo ""
+        echo "README:"
+        get_template_readme "$1" 2>/dev/null || echo "No README available"
         ;;
     help | --help | -h)
         show_help
