@@ -319,7 +319,7 @@ EOF
 
     # Run the setup script
     msg_info "Running setup script in container $CT_ID"
-    pct exec "$CT_ID" -- sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; /root/setup-nixos.sh'
+    sudo pct exec "$CT_ID" -- sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; /root/setup-nixos.sh'
 
     # Show success message and re-creation command
     local recreate_cmd="./$(basename "$0") create "
@@ -548,12 +548,12 @@ interactive_create() {
 
 enter_container() {
     msg_info "Entering container $1..."
-    pct exec "$1" -- /bin/sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; exec bash'
+    sudo pct exec "$1" -- /bin/sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; exec bash'
 }
 
 update_nixos() {
     msg_info "Updating NixOS in container $1..."
-    pct exec "$1" -- /bin/sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; nix-channel --update && nixos-rebuild switch --upgrade' || {
+    sudo pct exec "$1" -- /bin/sh -c 'if [ -f /etc/set-environment ]; then . /etc/set-environment; fi; nix-channel --update && nixos-rebuild switch --upgrade' || {
         msg_error "Failed to update container $1. Please check the container logs for more details."
         exit 1
     }
