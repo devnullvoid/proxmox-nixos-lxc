@@ -192,7 +192,7 @@ create_nixos_ct() {
     # Initialize ssh_keys_content
     local ssh_keys_content=""
     if [ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ]; then
-        ssh_keys_content=$(sed 's/.*/"&"/' "$CT_SSH_KEYS" | tr '\n' ' ')
+        ssh_keys_content=$(cat "$CT_SSH_KEYS" | tr '\n' ' ')
     fi
     
     # Determine if the container is privileged

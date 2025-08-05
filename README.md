@@ -13,11 +13,24 @@ A streamlined script for creating and managing NixOS containers in Proxmox VE wi
 
 ## 🚀 Quick Start
 
-Run the script directly from GitHub (requires `sudo`):
-
+### Option 1: Run from GitHub (Development Version)
 ```bash
+# Download and run the latest development version
 curl -sL https://raw.githubusercontent.com/devnullvoid/proxmox-nixos-lxc/main/proxmox-nixos-lxc.sh | sudo bash -s create
 ```
+
+### Option 2: Clone and Run Locally (Recommended)
+```bash
+# Clone the repository
+git clone https://github.com/devnullvoid/proxmox-nixos-lxc.git
+cd proxmox-nixos-lxc
+
+# Make executable and run
+chmod +x proxmox-nixos-lxc.sh
+sudo ./proxmox-nixos-lxc.sh create
+```
+
+
 
 ## 📋 Usage
 
@@ -40,10 +53,10 @@ When running non-interactively, you can specify these options:
 #### Container Settings
 - `--id <id>`: Container ID (auto-detected if not specified)
 - `--name <name>`: Container hostname (required)
-- `--cpus <count>`: Number of CPU cores (default: 1)
-- `--memory <mb>`: RAM in MB (default: 1024)
+- `--cpus <count>`: Number of CPU cores (default: 2)
+- `--memory <mb>`: RAM in MB (default: 2048)
 - `--swap <mb>`: Swap space in MB (default: 512)
-- `--disk <gb>`: Disk size in GB (default: 8)
+- `--disk <gb>`: Disk size in GB (default: 10)
 - `--storage <pool>`: Storage pool (default: local-lvm)
 - `--tags <tags>`: Comma-separated tags (optional)
 
@@ -96,6 +109,25 @@ To update NixOS packages in a container:
 ```bash
 sudo ./proxmox-nixos-lxc.sh update 101
 ```
+
+## 🔧 Development Workflow
+
+When developing or testing the script:
+
+1. **Edit locally**: Make changes to `proxmox-nixos-lxc.sh` on your development machine
+2. **Copy to Proxmox host**: Use `scp` to copy the script to your Proxmox environment
+3. **Test**: Run the script on the Proxmox host to verify changes
+4. **Commit and push**: Once tested, commit changes and push to GitHub
+
+```bash
+# Example workflow
+scp proxmox-nixos-lxc.sh your-proxmox-host:/tmp/proxmox-nixos-lxc-test.sh
+ssh your-proxmox-host
+sudo chmod +x /tmp/proxmox-nixos-lxc-test.sh
+sudo /tmp/proxmox-nixos-lxc-test.sh create
+```
+
+**Note**: The script must be run on the Proxmox host since it uses Proxmox-specific commands (`pct`, `pvesm`, etc.).
 
 ## 🔒 Security Notes
 
