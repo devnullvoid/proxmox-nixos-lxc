@@ -13,11 +13,10 @@ A streamlined script for creating and managing NixOS containers in Proxmox VE wi
 
 ## 🚀 Quick Start
 
-### Option 1: Run from GitHub (Development Version)
+### Option 1: Run from GitHub
 ```bash
-# Download and run the latest development version
-curl -sL https://raw.githubusercontent.com/devnullvoid/proxmox-nixos-lxc/main/proxmox-nixos-lxc.sh | sudo bash -s create
-```
+# Download and run the script from GitHub (interactive mode)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/devnullvoid/proxmox-nixos-lxc/main/proxmox-nixos-lxc.sh)"
 
 ### Option 2: Clone and Run Locally (Recommended)
 ```bash
@@ -29,8 +28,6 @@ cd proxmox-nixos-lxc
 chmod +x proxmox-nixos-lxc.sh
 sudo ./proxmox-nixos-lxc.sh create
 ```
-
-
 
 ## 📋 Usage
 
