@@ -10,6 +10,7 @@ A streamlined script for creating and managing NixOS containers in Proxmox VE wi
 - **Minimal Configuration**: Only essential parameters required, with sensible defaults for everything else
 - **Recreate Commands**: Automatically generates re-creation commands for easy container duplication
 - **NixOS-First**: Properly handles NixOS configuration and updates within the container
+- **Useful Defaults**: Includes git, vim, wget, and htop by default
 
 ## 🚀 Quick Start
 
@@ -76,7 +77,7 @@ When running non-interactively, you can specify these options:
 
 #### Security & Access
 - `--password <password>`: Set root password (optional but recommended)
-- `--ssh-keys <path>`: Path to public SSH keys file (optional)
+- `--ssh-keys <path|key>`: Path to public SSH keys file or direct key content (optional)
 - `--no-start-on-boot`: Disable auto-start on boot (enabled by default)
 - `--no-unprivileged`: Run as privileged container (not recommended)
 - `--no-nesting`: Disable container nesting (nesting enabled by default)
@@ -102,6 +103,14 @@ sudo ./proxmox-nixos-lxc.sh create \
     --dns 1.1.1.1 \
     --password "your-secure-password" \
     --ssh-keys ~/.ssh/id_rsa.pub
+```
+
+### Example with Direct SSH Key Content
+```bash
+sudo ./proxmox-nixos-lxc.sh create \
+    --name my-nixos-app \
+    --password "your-secure-password" \
+    --ssh-keys "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCtEGngXbjOs4Rg09IwvTbZ4VYNt91Abr13LJ2BcQOBYrmwXbijyO7Pjb23ozaq0fyLT0kYDqcGpEW1zIuc5467aDt+NKPzE/F/MM9pCFF3C6rsKZYT7rokvagwzbNcuFkQpHYxHQIj/w/QD2qcducPwfDvq4Izg80pymAPLxMp0W2zZgMNf72ATj+C/Ynay+5XO/8zzugYsdanVGV0LVs5+ABxPCkw8S/slmzdIP8ANh8RYJ8FoeyxYDm1F2bCvlE6E+hGtgDnkv2ZtHSk2lmnQyZNFpoWFKWmifkFsGeJhdxVmCqcPgfWdvzaSlKyiU/PN+bnQ+WQCSIrJgr8GIjNRl3HdV2+qtcvuy+zII5ptzrlnjWjTIStow9CnLx+P+AreOZtyNTekjz4Mdpm0zse0xfeF1xo2QfgE8ZSLh8rayEFVLO0W4qNFE1Yzx/tOOk/KQlMANq/SDVjBgWS1NePZCDDbNeAKuk7ZiwjjzYHGC4L0rSC6cKtYe0qeslm3POvhgJZxKUs7Wq8fZsizNkUoyJhzYh0IL3bfFYT95jWZqh7fPv6AeSJral/Nab05TM/2gGxUEamyWe0jCXHIT4rPqNzakj8UehT2AKsfpPIF12ZsxXcwGgDqfWPNOzkzrdpO/51BQQDtiDDQW6zl5BIa1ximbjlidO3+hP87DliTw== root@uranus"
 ```
 
 ### Minimal Non-Interactive Example (DHCP)

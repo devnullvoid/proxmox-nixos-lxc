@@ -191,8 +191,14 @@ create_nixos_ct() {
     
     # Initialize ssh_keys_content
     local ssh_keys_content=""
-    if [ -n "$CT_SSH_KEYS" ] && [ -f "$CT_SSH_KEYS" ]; then
-        ssh_keys_content=$(cat "$CT_SSH_KEYS" | tr '\n' ' ')
+    if [ -n "$CT_SSH_KEYS" ]; then
+        if [ -f "$CT_SSH_KEYS" ]; then
+            # Read from file
+            ssh_keys_content=$(cat "$CT_SSH_KEYS" | tr '\n' ' ')
+        else
+            # Treat as direct key content
+            ssh_keys_content="$CT_SSH_KEYS"
+        fi
     fi
     
     # Determine if the container is privileged
@@ -213,6 +219,14 @@ create_nixos_ct() {
   networking.hostName = "$CT_NAME";
   time.timeZone = "Etc/UTC";
   system.stateVersion = "$NIXOS_VERSION";
+
+  # Default packages
+  environment.systemPackages = with pkgs; [
+    git
+    vim
+    wget
+    htop
+  ];
 
   # Proxmox LXC settings
   nix.settings.sandbox = false;
@@ -586,7 +600,7 @@ show_help() {
     echo "  --unprivileged <0|1>  Unprivileged container"
     echo "  --nesting <0|1>       Enable nesting"
     echo "  --password <pass>     Root password"
-    echo "  --ssh-keys <path>     Path to public SSH keys file"
+    echo "  --ssh-keys <path|key> Path to public SSH keys file or direct key content"
     echo "  --start-on-boot <0|1> Start container on boot"
 }
 
